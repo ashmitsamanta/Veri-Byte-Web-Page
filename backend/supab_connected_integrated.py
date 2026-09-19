@@ -1,11 +1,3 @@
-"""
-supab_connected_integrated.py — Supabase Authentication & Document Screening Service.
-
-Provides dedicated cloud-backed authentication endpoints (signup, login, user session)
-and authenticated scan submission with direct persistence to Supabase PostgreSQL database
-and storage buckets, with automatic fallback to local storage.
-"""
-
 import os
 import mimetypes
 import re
@@ -16,9 +8,6 @@ from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 
-_env_file = Path(__file__).resolve().parent / ".env"
-if _env_file.exists():
-    load_dotenv(_env_file)
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -112,10 +101,12 @@ def signup(
                 "user_id": user.id,
                 "user_name": username,
                 "user_email": email,
+                "user_number":phone,
+                "user_aadhaar_num":aadhaar
             }).execute()
         except Exception as db_error:
             # Auth user was created, so report the DB issue clearly instead of hiding it.
-            raise HTTPException(status_code=500, detail=f"Account created, but profile table update failed: {db_error}")
+            raise HTTPException(status_code=500, detail=f"Account already exists {db_error}")
 
         session = response.session
         return {
@@ -211,55 +202,4 @@ async def upload_document(
         )
         return {"success": True, "message": "File uploaded successfully", "path": storage_path}
     except Exception as e:
-        return {"success": True, "message": "File received and registered", "path": storage_path}
-
-
-# Delegate to backend forensic database for user scan persistence
-import sys
-import logging
-
-_backend_path = str(Path(__file__).resolve().parent)
-_root_path = str(Path(__file__).resolve().parent.parent)
-if _backend_path not in sys.path:
-    sys.path.insert(0, _backend_path)
-if _root_path not in sys.path:
-    sys.path.insert(0, _root_path)
-
-try:
-    try:
-        from database import get_user_scans, save_user_scan
-    except ImportError:
-        from backend.database import get_user_scans, save_user_scan
-
-    @app.post("/api/scans/save")
-    async def save_scan_endpoint(
-        payload: dict,
-        authorization: str | None = Header(default=None),
-    ):
-        user_id = None
-        if authorization:
-            try:
-                user, _ = get_current_user(authorization)
-                user_id = user.id
-            except Exception:
-                pass
-        if not user_id:
-            user_id = payload.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=400, detail="User identification or active session required to save scan.")
-
-        saved_scan = save_user_scan(user_id, payload)
-        return {"success": True, "message": "Scan record saved", "scan": saved_scan}
-
-    @app.get("/api/scans/history")
-    async def get_scans_history_endpoint(authorization: str | None = Header(default=None)):
-        user, _ = get_current_user(authorization)
-        scans = get_user_scans(user.id)
-        return {"success": True, "user_id": user.id, "total": len(scans), "scans": scans}
-except Exception as e:
-    logging.getLogger("veri-byte-api").warning("Scan persistence endpoints initialization failed: %s", e)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
+        raise HTTPException(status_code=403, detail=str(e))
